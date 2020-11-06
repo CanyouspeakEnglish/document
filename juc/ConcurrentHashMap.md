@@ -272,3 +272,48 @@ private final void tryPresize(int size) {
     }
 }
 ```
+
+```java
+//帮助转移 在检测f.hash = move 的时候
+final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
+    Node<K,V>[] nextTab; int sc;
+    //tab 不为空 并且 f结点已经被包装为ForwardingNode 并且下一个node集合不为空
+    if (tab != null && (f instanceof ForwardingNode) &&
+        (nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
+        //唯一标识 前16位标识状态 后16位标识具体正在扩容的线程数量
+        int rs = resizeStamp(tab.length);
+        // 没有发生并发修改 sizeCtl < 0说明还在扩容
+        while (nextTab == nextTable && table == tab &&
+               (sc = sizeCtl) < 0) {
+            //如果sizeCtl 右移16位 和 唯一标识的前16位不相等 则标识位发生了变化
+            //如果sizeCtl = rs + 1 说明线程已经扩容完成 因为在发生扩容的时候 是sizeCtl + 2 
+            //如果sizeCtl = rs + 65535 说明达到了 最大的帮助线程也需要退出
+            //如果转移下标发生了变化 说明扩容正在结束 需要退出
+            if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+                sc == rs + MAX_RESIZERS || transferIndex <= 0)
+                break;
+            //上面的跳出条件全部都不满足那么开始用cas 帮助扩容 首先线程数加1 
+            if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+                //开始扩容
+                transfer(tab, nextTab);
+                break;
+            }
+        }
+        return nextTab;
+    }
+    return table;
+}
+```
+
+```java
+//高位为1 一定为负
+static final int resizeStamp(int n) {
+     	// 27 = 0000 0000 0001 1011
+     	// 0000 0000 0001 1011 | 1000 0000 0000 0000 = 1000 0000 0001 1011
+     	// 以16位例  0000 0000 0000 0000 0000 0000 0001 0000
+     	//Integer.numberOfLeadingZeros(n) = 27 表示第一个不为0前面0的个数 
+     	//RESIZE_STAMP_BITS = 16  1左移15位
+     	//1000 0000 0001 1011
+        return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
+    }
+```
