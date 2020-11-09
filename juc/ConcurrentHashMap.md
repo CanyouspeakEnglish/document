@@ -141,16 +141,20 @@ private final Node<K,V>[] initTable() {
 final TreeNode<K,V> putTreeVal(int h, K k, V v) {
     Class<?> kc = null;
     boolean searched = false;
+    //死循环
     for (TreeNode<K,V> p = root;;) {
         int dir, ph; K pk;
+        //如果为null 创建root结点
         if (p == null) {
             first = root = new TreeNode<K,V>(h, k, v, null, null);
             break;
         }
+        //如果新增的结点的hash比 root结点的hash小 那么dir设置为-1
         else if ((ph = p.hash) > h)
             dir = -1;
-        else if (ph < h)
+        else if (ph < h)//比root结点的hash大那么dir设置为1 
             dir = 1;
+        //key 值相等直接返回 p
         else if ((pk = p.key) == k || (pk != null && k.equals(pk)))
             return p;
         else if ((kc == null &&
