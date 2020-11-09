@@ -518,3 +518,430 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
     }
 }
 ```
+
+```java
+//添加数据 条数 采用分段计数优化
+private final void addCount(long x, int check) {
+    CounterCell[] as; long b, s;
+    //counterCells 不为空 或者 BASECOUNT  cas失败的情况下
+    if ((as = counterCells) != null ||
+        !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+        CounterCell a; long v; int m;
+        boolean uncontended = true;
+        if (as == null || (m = as.length - 1) < 0 ||
+            //ThreadLocalRandom.getProbe() & m 使用线程安全的随机 确定数字下标
+            (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
+            //数值增加失败
+            !(uncontended =
+              U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+            //进行添加
+            fullAddCount(x, uncontended);
+            return;
+        }
+        //因为bincount数量小于1 所以不需要进行扩容 直接返回
+        if (check <= 1)
+            return;
+        s = sumCount();
+    }
+    // 用于检查链表的长度 
+    if (check >= 0) {
+        Node<K,V>[] tab, nt; int n, sc;
+        while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
+               (n = tab.length) < MAXIMUM_CAPACITY) {
+            int rs = resizeStamp(n);
+            if (sc < 0) {
+                //标识位不相等 或者 sc == rs+1 说明已经有一个线程在扩容
+                if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+                    //或者已经等于最大的扩容线程
+                    sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
+                    transferIndex <= 0)
+                    break;
+                //设置添加扩容线程 
+                if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                    //开始转移
+                    transfer(tab, nt);
+            }//大于等于0 开始扩容 
+            else if (U.compareAndSwapInt(this, SIZECTL, sc,
+                                         (rs << RESIZE_STAMP_SHIFT) + 2))
+                transfer(tab, null);
+            s = sumCount();
+        }
+    }
+}
+```
+
+```java
+private final void fullAddCount(long x, boolean wasUncontended) {
+    int h;
+    //判断 ThreadLocalRandom 是否初始化 没有初始化为0
+    if ((h = ThreadLocalRandom.getProbe()) == 0) {
+        ThreadLocalRandom.localInit();      // force initialization
+        h = ThreadLocalRandom.getProbe();
+        wasUncontended = true;
+    }
+    boolean collide = false;                // True if last slot nonempty
+    //死循环
+    for (;;) {
+        CounterCell[] as; CounterCell a; int n; long v;
+        //counterCells 不为空 并且长度大于0
+        if ((as = counterCells) != null && (n = as.length) > 0) {
+            //通过撞针 & 数字长度-1 来定位数据位置 == null
+            if ((a = as[(n - 1) & h]) == null) {
+                //判断counterCells数组是否在初始化过程中 0 不是初始化过程中
+                if (cellsBusy == 0) {            // Try to attach new Cell
+                    //创建新的CounterCell
+                    CounterCell r = new CounterCell(x); // Optimistic create
+                    //将CELLSBUSY 从0设置成1 
+                    if (cellsBusy == 0 &&
+                        U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                        boolean created = false;
+                        try {               // Recheck under lock
+                            CounterCell[] rs; int m, j;
+                            if ((rs = counterCells) != null &&
+                                (m = rs.length) > 0 &&
+                                rs[j = (m - 1) & h] == null) {
+                                //将新创建的 CounterCell赋值给数组
+                                rs[j] = r;
+                                //标记为创建完成
+                                created = true;
+                            }
+                        } finally {
+                            //cellsBusy 重置为0
+                            cellsBusy = 0;
+                        }
+                        //停止
+                        if (created)
+                            break;
+                        continue;           // Slot is now non-empty
+                    }
+                }
+                collide = false;
+            }
+            else if (!wasUncontended)       // CAS already known to fail
+                wasUncontended = true;      // Continue after rehash
+            else if (U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))
+                break;
+            //如果数组发生变化 或者 n大于 cpu的数量
+            else if (counterCells != as || n >= NCPU)
+                collide = false;            // At max size or stale
+            else if (!collide)
+                collide = true;
+            //发生扩容 cas成功
+            else if (cellsBusy == 0 &&
+                     U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                try {
+                    if (counterCells == as) {// Expand table unless stale
+                        //扩容为原来的2倍
+                        CounterCell[] rs = new CounterCell[n << 1];
+                        for (int i = 0; i < n; ++i)
+                            //进行数组迁移
+                            rs[i] = as[i];
+                        //重新赋值
+                        counterCells = rs;
+                    }
+                } finally {
+                    //设置为0
+                    cellsBusy = 0;
+                }
+                collide = false;
+                continue;                   // Retry with expanded table
+            }
+            //发生变化重新生成撞针
+            h = ThreadLocalRandom.advanceProbe(h);
+        }
+        //进行初始化 默认的初始化长度为2
+        else if (cellsBusy == 0 && counterCells == as &&
+                 U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+            boolean init = false;
+            try {                           // Initialize table
+                if (counterCells == as) {
+                    CounterCell[] rs = new CounterCell[2];
+                    rs[h & 1] = new CounterCell(x);
+                    counterCells = rs;
+                    init = true;
+                }
+            } finally {
+                cellsBusy = 0;
+            }
+            if (init)
+                break;
+        }
+        //设置成功
+        else if (U.compareAndSwapLong(this, BASECOUNT, v = baseCount, v + x))
+            break;                          // Fall back on using base
+    }
+}
+```
+
+```java
+//进行计数 用基础basecount + counterCell.value
+final long sumCount() {
+    CounterCell[] as = counterCells; CounterCell a;
+    long sum = baseCount;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                sum += a.value;
+        }
+    }
+    return sum;
+}
+```
+
+```java
+//通过key获取值  containsKey 也是调用这个方法
+public V get(Object key) {
+    Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
+    //通过散列函数处理
+    int h = spread(key.hashCode());
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        //定位到曹
+        (e = tabAt(tab, (n - 1) & h)) != null) {
+        //hash值相等 
+        if ((eh = e.hash) == h) {
+            //并且key 相等
+            if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                return e.val;
+        }
+        else if (eh < 0)
+            return (p = e.find(h, key)) != null ? p.val : null;
+        while ((e = e.next) != null) {
+            if (e.hash == h &&
+                ((ek = e.key) == key || (ek != null && key.equals(ek))))
+                return e.val;
+        }
+    }
+    return null;
+}
+```
+
+```java
+//如果预期的key不存在那么执行 mappingFunction 因为是方法 所以内部是线程安全的 可以处理一些特定的初始化操作
+public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
+    if (key == null || mappingFunction == null)
+        throw new NullPointerException();
+    int h = spread(key.hashCode());
+    V val = null;
+    int binCount = 0;
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0)
+            tab = initTable();
+        else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
+            Node<K,V> r = new ReservationNode<K,V>();
+            synchronized (r) {
+                if (casTabAt(tab, i, null, r)) {
+                    binCount = 1;
+                    Node<K,V> node = null;
+                    try {
+                        if ((val = mappingFunction.apply(key)) != null)
+                            node = new Node<K,V>(h, key, val, null);
+                    } finally {
+                        setTabAt(tab, i, node);
+                    }
+                }
+            }
+            if (binCount != 0)
+                break;
+        }
+        else if ((fh = f.hash) == MOVED)
+            tab = helpTransfer(tab, f);
+        else {
+            boolean added = false;
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    if (fh >= 0) {
+                        binCount = 1;
+                        for (Node<K,V> e = f;; ++binCount) {
+                            K ek; V ev;
+                            if (e.hash == h &&
+                                ((ek = e.key) == key ||
+                                 (ek != null && key.equals(ek)))) {
+                                val = e.val;
+                                break;
+                            }
+                            Node<K,V> pred = e;
+                            if ((e = e.next) == null) {
+                                if ((val = mappingFunction.apply(key)) != null) {
+                                    added = true;
+                                    pred.next = new Node<K,V>(h, key, val, null);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    else if (f instanceof TreeBin) {
+                        binCount = 2;
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> r, p;
+                        if ((r = t.root) != null &&
+                            (p = r.findTreeNode(h, key, null)) != null)
+                            val = p.val;
+                        else if ((val = mappingFunction.apply(key)) != null) {
+                            added = true;
+                            t.putTreeVal(h, key, val);
+                        }
+                    }
+                }
+            }
+            if (binCount != 0) {
+                if (binCount >= TREEIFY_THRESHOLD)
+                    treeifyBin(tab, i);
+                if (!added)
+                    return val;
+                break;
+            }
+        }
+    }
+    if (val != null)
+        addCount(1L, binCount);
+    return val;
+}
+```
+
+```java
+//如果key存在 那么会将原来的值传入remappingFunction 中执行特定的方法在处理
+public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+    if (key == null || remappingFunction == null)
+        throw new NullPointerException();
+    int h = spread(key.hashCode());
+    V val = null;
+    int delta = 0;
+    int binCount = 0;
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0)
+            tab = initTable();
+        else if ((f = tabAt(tab, i = (n - 1) & h)) == null)
+            break;
+        else if ((fh = f.hash) == MOVED)
+            tab = helpTransfer(tab, f);
+        else {
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    if (fh >= 0) {
+                        binCount = 1;
+                        for (Node<K,V> e = f, pred = null;; ++binCount) {
+                            K ek;
+                            if (e.hash == h &&
+                                ((ek = e.key) == key ||
+                                 (ek != null && key.equals(ek)))) {
+                                val = remappingFunction.apply(key, e.val);
+                                if (val != null)
+                                    e.val = val;
+                                else {
+                                    delta = -1;
+                                    Node<K,V> en = e.next;
+                                    if (pred != null)
+                                        pred.next = en;
+                                    else
+                                        setTabAt(tab, i, en);
+                                }
+                                break;
+                            }
+                            pred = e;
+                            if ((e = e.next) == null)
+                                break;
+                        }
+                    }
+                    else if (f instanceof TreeBin) {
+                        binCount = 2;
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> r, p;
+                        if ((r = t.root) != null &&
+                            (p = r.findTreeNode(h, key, null)) != null) {
+                            val = remappingFunction.apply(key, p.val);
+                            if (val != null)
+                                p.val = val;
+                            else {
+                                delta = -1;
+                                if (t.removeTreeNode(p))
+                                    setTabAt(tab, i, untreeify(t.first));
+                            }
+                        }
+                    }
+                }
+            }
+            if (binCount != 0)
+                break;
+        }
+    }
+    if (delta != 0)
+        addCount((long)delta, binCount);
+    return val;
+}
+```
+
+```java
+//remove 删除方法和 get方法差不多 先定位数据 然后将节点释放 最后将数量-1
+final V replaceNode(Object key, V value, Object cv) {
+    int hash = spread(key.hashCode());
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0 ||
+            (f = tabAt(tab, i = (n - 1) & hash)) == null)
+            break;
+        else if ((fh = f.hash) == MOVED)
+            tab = helpTransfer(tab, f);
+        else {
+            V oldVal = null;
+            boolean validated = false;
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    if (fh >= 0) {
+                        validated = true;
+                        for (Node<K,V> e = f, pred = null;;) {
+                            K ek;
+                            if (e.hash == hash &&
+                                ((ek = e.key) == key ||
+                                 (ek != null && key.equals(ek)))) {
+                                V ev = e.val;
+                                if (cv == null || cv == ev ||
+                                    (ev != null && cv.equals(ev))) {
+                                    oldVal = ev;
+                                    if (value != null)
+                                        e.val = value;
+                                    else if (pred != null)
+                                        pred.next = e.next;
+                                    else
+                                        setTabAt(tab, i, e.next);
+                                }
+                                break;
+                            }
+                            pred = e;
+                            if ((e = e.next) == null)
+                                break;
+                        }
+                    }
+                    else if (f instanceof TreeBin) {
+                        validated = true;
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> r, p;
+                        if ((r = t.root) != null &&
+                            (p = r.findTreeNode(hash, key, null)) != null) {
+                            V pv = p.val;
+                            if (cv == null || cv == pv ||
+                                (pv != null && cv.equals(pv))) {
+                                oldVal = pv;
+                                if (value != null)
+                                    p.val = value;
+                                else if (t.removeTreeNode(p))
+                                    setTabAt(tab, i, untreeify(t.first));
+                            }
+                        }
+                    }
+                }
+            }
+            if (validated) {
+                if (oldVal != null) {
+                    if (value == null)
+                        addCount(-1L, -1);
+                    return oldVal;
+                }
+                break;
+            }
+        }
+    }
+    return null;
+}
+```
