@@ -230,21 +230,23 @@ private final void treeifyBin(Node<K,V>[] tab, int index) {
 ```java
 //扩容
 private final void tryPresize(int size) {
-    //判断边缘值
+    //如果大小为MAXIMUM_CAPACITY最大总量的一半，那么直接扩容为MAXIMUM_CAPACITY，否则计算最小幂次方
     int c = (size >= (MAXIMUM_CAPACITY >>> 1)) ? MAXIMUM_CAPACITY :
-    	//
-        tableSizeFor(size + (size >>> 1) + 1);
+        tableSizeFor(size + (size >>> 1) + 1);//计算2的幂次方
     int sc;
     while ((sc = sizeCtl) >= 0) {
         Node<K,V>[] tab = table; int n;
+        //如果table还未进行初始化
         if (tab == null || (n = tab.length) == 0) {
             n = (sc > c) ? sc : c;
+            //cas修改sizeCtl为-1，表示table正在进行初始化
             if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
                 try {
                     if (table == tab) {
                         @SuppressWarnings("unchecked")
                         Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
                         table = nt;
+                        //重新赋值sc
                         sc = n - (n >>> 2);
                     }
                 } finally {
@@ -252,21 +254,36 @@ private final void tryPresize(int size) {
                 }
             }
         }
+        //如果扩容大小没有达到阈值，或者超过最大容量
         else if (c <= sc || n >= MAXIMUM_CAPACITY)
             break;
         else if (tab == table) {
+            //生成表的生成戳，每个n都有不同的生成戳
             int rs = resizeStamp(n);
             if (sc < 0) {
                 Node<K,V>[] nt;
+                /**1.第一个判断 sc右移RESIZE_STAMP_SHIFT位，也就是比较高ESIZE_STAMP_BITS位生成戳和rs是否相等
+                    * 相等则代表是同一个n，是在同一容量下进行的扩容，
+                    *  2.第二个和第三个判断 判断当前帮助扩容线程数是否已达到MAX_RESIZERS最大扩容线程数
+                    *  3.第四个和第五个判断 为了确保transfer()方法初始化完毕
+                    */
                 if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                     sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                     transferIndex <= 0)
                     break;
+                //将扩容线程加一
                 if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                    //开始扩容
                     transfer(tab, nt);
-            }
+            } 
+            /**如果没有线程在进行扩容，那么cas修改sizeCtl值，作为扩容的发起，rs左移RESIZE_STAMP_SHIFT位+2
+                 * 上面说了，左移RESIZE_STAMP_SHIFT位，肯定是个负数，代表有一个线程正在进行扩容
+                 * 此时sizeCtl高RESIZE_STAMP_BITS位为生成戳，低RESIZE_STAMP_SHIFT位为扩容线程数
+                   添加线程数
+                 */
             else if (U.compareAndSwapInt(this, SIZECTL, sc,
                                          (rs << RESIZE_STAMP_SHIFT) + 2))
+                //第一次扩容nexttable=null
                 transfer(tab, null);
         }
     }
