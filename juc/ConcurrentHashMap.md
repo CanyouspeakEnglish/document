@@ -317,3 +317,183 @@ static final int resizeStamp(int n) {
         return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
     }
 ```
+
+```java
+//开始真正的转移逻辑
+private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
+    //表长度  stride 表示每个线程可以转移的数量
+    int n = tab.length, stride;
+    //Runtime.getRuntime().availableProcessors(); 获取cpu的数量
+    if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
+        stride = MIN_TRANSFER_STRIDE; // subdivide range
+    //新的table为空 
+    if (nextTab == null) {            // initiating
+        try {
+            //重新创建一个数组长度为原来的两倍
+            @SuppressWarnings("unchecked")
+            Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+            //将nt赋值给nextTab
+            nextTab = nt;
+        } catch (Throwable ex) {      // try to cope with OOME
+            sizeCtl = Integer.MAX_VALUE;
+            return;
+        }
+        //值绑定
+        nextTable = nextTab;
+        //转移的索引
+        transferIndex = n;
+    }
+    //扩容后的数组长度
+    int nextn = nextTab.length;
+    //将扩容后的node数组用ForwardingNode标记
+    ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+    boolean advance = true;
+    boolean finishing = false; // to ensure sweep before committing nextTab
+    for (int i = 0, bound = 0;;) {
+        Node<K,V> f; int fh;
+        while (advance) {
+            int nextIndex, nextBound;
+            //如果开始边界大于结束边界 或者 已经完成 跳出循环
+            if (--i >= bound || finishing)
+                advance = false;
+            //如果转移的索引小于等于0 结束
+            else if ((nextIndex = transferIndex) <= 0) {
+                i = -1;
+                advance = false;
+            }
+            //设置初始边界 0  
+            else if (U.compareAndSwapInt
+                     (this, TRANSFERINDEX, nextIndex,
+                      nextBound = (nextIndex > stride ?
+                                   nextIndex - stride : 0))) {
+                bound = nextBound;
+                i = nextIndex - 1;
+                advance = false;
+            }
+        }
+        if (i < 0 || i >= n || i + n >= nextn) {
+            int sc;
+            //总扩容完成
+            if (finishing) {
+                //完成后将nextTable 置为空
+                nextTable = null;
+                //将数据 之前的next 和 全局变量绑定
+                table = nextTab;
+                //更新sizeCtl 扩容预期值  以16 为例 sizeCtl = 24
+                sizeCtl = (n << 1) - (n >>> 1);
+                return;
+            }
+            //尝试将sc-1 表示这个线程结束帮助扩容
+            if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                //如果sc-2 和 唯一标识的前16位不相等 那么说明已经有线程帮助扩容了 直接返回
+                if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+                    return;
+                //完成跳出循环
+                finishing = advance = true;
+                //再次检查整个table
+                i = n;
+            }
+        }
+        //获取老数组下标i的位置 如果为null 那么将ForwardingNode 进行标识
+        else if ((f = tabAt(tab, i)) == null)
+            advance = casTabAt(tab, i, null, fwd);
+        // f.hash = MOVED -1 那么说明已经处理过 ForwardingNode 在初始化的时候将hash处理为-1
+        else if ((fh = f.hash) == MOVED)
+            //下移
+            advance = true; 
+        else {
+            //到这里说明这个位置有实际值了且不是占位符对这个节点上锁为什么上锁防止putVal的时候向链表插入数据
+            synchronized (f) {
+                //双重检查
+                if (tabAt(tab, i) == f) {
+                    //低位链表 高位链表
+                    Node<K,V> ln, hn;
+                    //如果f的hash值大于0TreeBin的hash是-2
+                    if (fh >= 0) {
+                        //hash值 和 长度做& 运算 为了判断 高位还是低位
+                        int runBit = fh & n;
+                        Node<K,V> lastRun = f;
+                        //通过循环找到最后一个 node  并将 p赋值给 lastRun
+                        for (Node<K,V> p = f.next; p != null; p = p.next) {
+                            int b = p.hash & n;
+                            if (b != runBit) {
+                                runBit = b;
+                                lastRun = p;
+                            }
+                        }
+                        //runBit = 0 那么将lastRun赋值给ln 低链表 高位链表为null
+                        if (runBit == 0) {
+                            ln = lastRun;
+                            hn = null;
+                        }
+                        else {
+                            hn = lastRun;
+                            ln = null;
+                        }
+                        //再次循环将链表进行拆分 分为高低链
+                        for (Node<K,V> p = f; p != lastRun; p = p.next) {
+                            int ph = p.hash; K pk = p.key; V pv = p.val;
+                            if ((ph & n) == 0)
+                                ln = new Node<K,V>(ph, pk, pv, ln);
+                            else
+                                hn = new Node<K,V>(ph, pk, pv, hn);
+                        }
+                        //将低位链表替换在原来i的位置
+                        setTabAt(nextTab, i, ln);
+                        //将高位链表替换为i+n的位置
+                        setTabAt(nextTab, i + n, hn);
+                        //i位置用fwd 进行替换标记
+                        setTabAt(tab, i, fwd);
+                        //索引下推
+                        advance = true;
+                    }
+                    //如果位置是红黑树
+                    else if (f instanceof TreeBin) {
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> lo = null, loTail = null;
+                        TreeNode<K,V> hi = null, hiTail = null;
+                        int lc = 0, hc = 0;
+                        //遍历
+                        for (Node<K,V> e = t.first; e != null; e = e.next) {
+                            int h = e.hash;
+                            TreeNode<K,V> p = new TreeNode<K,V>
+                                (h, e.key, e.val, null, null);
+                            //如果&等于0 那么放在低位
+                            if ((h & n) == 0) {
+                                if ((p.prev = loTail) == null)
+                                    lo = p;
+                                else
+                                    loTail.next = p;
+                                loTail = p;
+                                ++lc;
+                            }
+                            //不是0放到高位
+                            else {
+                                if ((p.prev = hiTail) == null)
+                                    hi = p;
+                                else
+                                    hiTail.next = p;
+                                hiTail = p;
+                                ++hc;
+                            }
+                        }
+                        //判断链表长度是否小于等于6 变成链表 否则变成红黑树
+                        ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
+                            (hc != 0) ? new TreeBin<K,V>(lo) : t;
+                        hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
+                            (lc != 0) ? new TreeBin<K,V>(hi) : t;
+                         // 低位树
+                        setTabAt(nextTab, i, ln);
+                        // 高位树
+                        setTabAt(nextTab, i + n, hn);
+                        //设置为fwd标记
+                        setTabAt(tab, i, fwd);
+                        //往下推
+                        advance = true;
+                    }
+                }
+            }
+        }
+    }
+}
+```
