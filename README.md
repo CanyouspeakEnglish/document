@@ -7,6 +7,8 @@
 
 1. [reentrantlock](https://github.com/liuxingxingghs/document/blob/master/juc/ReentrantLock.md)
 2. [concurrentHashMap](https://github.com/liuxingxingghs/document/blob/master/juc/ConcurrentHashMap.md)
+3. [AbstractQueuedSynchronizer](https://github.com/liuxingxingghs/document/blob/master/juc/AbstractQueuedSynchronizer.md)
+
 
 #### jvm
 
