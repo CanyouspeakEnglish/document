@@ -153,3 +153,37 @@ private final boolean parkAndCheckInterrupt() {
     return Thread.interrupted();
 }
 ```
+
+```java
+//释放锁
+public final boolean release(int arg) {
+    //自定义释放方法 true 释放成功
+    if (tryRelease(arg)) {
+        Node h = head;
+        if (h != null && h.waitStatus != 0)
+            unparkSuccessor(h);
+        return true;
+    }
+    return false;
+}
+```
+
+```java
+//释放 从head开始
+private void unparkSuccessor(Node node) {
+    int ws = node.waitStatus;
+    if (ws < 0)
+        compareAndSetWaitStatus(node, ws, 0);
+    Node s = node.next;
+    if (s == null || s.waitStatus > 0) {
+        s = null;
+        //从尾开找 应为从尾部找不出出现断链的情况 因为链的构建是分段的在极端情况下会出现 从尾部就能解决这种
+        for (Node t = tail; t != null && t != node; t = t.prev)
+            if (t.waitStatus <= 0)
+                s = t;
+    }
+    if (s != null)
+        //取消挂起
+        LockSupport.unpark(s.thread);
+}
+```
