@@ -69,3 +69,7 @@
 ##### iso网络7层模型
 
 ![image-20200829112827203](D:\typora\image-20200829112827203.png)
+
+jvm 图
+
+![jvm](C:\Users\Administrator\Desktop\document\jvm.png)
