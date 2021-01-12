@@ -131,8 +131,64 @@
 > > > > > >
 > > > > > > > org.apache.catalina.util.LifecycleBase#fireLifecycleEvent
 
-> org.apache.catalina.startup.Bootstrap#start
->
-> > org.apache.catalina.startup.Catalina#start
-> >
-> > > org.apache.catalina.Lifecycle#start
+> > > > org.apache.catalina.Lifecycle#init
+> > > >
+> > > > > org.apache.catalina.util.LifecycleBase#init
+> > > > >
+> > > > > org.apache.catalina.util.LifecycleBase#initInternal
+> > > > >
+> > > > > org.apache.catalina.core.StandardServer#initInternal
+> > > > >
+> > > > > > org.apache.catalina.core.StandardService#initInternal
+> > > > > >
+> > > > > > > org.apache.catalina.core.StandardEngine#initInternal
+> > > > > > >
+> > > > > > > > org.apache.catalina.core.ContainerBase#initInternal
+
+> > > > > > > org.apache.catalina.core.StandardThreadExecutor#initInternal
+
+> > > > > > org.apache.catalina.connector.Connector#initInternal 对外接收请求组件
+> > > > > >
+> > > > > > > org.apache.catalina.connector.CoyoteAdapter
+> > > > > > >
+> > > > > > > org.apache.coyote.AbstractProtocol#init
+> > > > > > >
+> > > > > > > > org.apache.tomcat.util.net.AbstractEndpoint#init
+> > > > > > > >
+> > > > > > > > org.apache.tomcat.util.net.AbstractEndpoint#bindWithCleanup
+> > > > > > > >
+> > > > > > > > > org.apache.tomcat.util.net.AbstractEndpoint#bind
+> > > > > > > > >
+> > > > > > > > > org.apache.tomcat.util.net.NioEndpoint#bind
+> > > > > > > > >
+> > > > > > > > > org.apache.tomcat.util.net.NioEndpoint#initServerSocket
+
+`时序图`：
+
+https://tomcat.apache.org/tomcat-10.0-doc/architecture/startup/serverStartup.pdf
+
+`server`: server 代表整个容器,该接口很少被定制 org.apache.catalina.Server
+
+`service`: service 一个server 可以存在多个service service也很少被定制重写 org.apache.catalina.Service
+
+`Engine`：用来处理用户请求
+
+`Host`: 虚拟主机
+
+`Connector`: 连接器对外连接
+
+`Context`：一个context代表着一个web应用
+
+
+
+![Tomcat 架构图](D:\sourcecode\document\tomcat\5a26687d0001ca2712300718.jpg)
+
+ps -ef | grep tomcat
+
+cat /pro/pid/status
+
+* 参数说明
+
+https://blog.csdn.net/u011425939/article/details/75335079
+
+top -p pid
