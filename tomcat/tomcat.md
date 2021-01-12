@@ -182,7 +182,7 @@ https://tomcat.apache.org/tomcat-10.0-doc/architecture/startup/serverStartup.pdf
 
 
 ![Tomcat 架构图](D:\sourcecode\document\tomcat\5a26687d0001ca2712300718.jpg)
-（![add image](https://github.com/liuxingxingghs/document/blob/master/tomcat/5a26687d0001ca2712300718.jpg)
+![image](https://github.com/liuxingxingghs/document/blob/master/tomcat/5a26687d0001ca2712300718.jpg)
 ps -ef | grep tomcat
 
 cat /pro/pid/status
