@@ -192,3 +192,150 @@ cat /pro/pid/status
 https://blog.csdn.net/u011425939/article/details/75335079
 
 top -p pid
+
+### Tomcat优化
+
+没用的项目删掉
+
+随机数 -Djava.security.egd=file/dev/./urandom
+
+删除无用的jar包依赖 假如不需要websocket支持那么可以将lib文件夹下的 tomcat-websocket.jar websocker-api.jar删除
+
+io 选择 通过protocal 进行设置 通过压测选择不同的协议支持 
+
+connector 标签中线程池的设置 大小调整需要压测
+
+静态分离 静态资源提前
+
+删除无用的配置标签
+
+* deploy的时候,默认项webapps
+
+  ```java
+  Host 里面的 startStopThreads 设置为0 可以启动当前cpu数量的线程并行启动
+  autoDeploy 默认为true 定时检查appBase下是否存在更新 建议关闭 因为会存在线程检查带来额外的开销
+  ```
+
+* **Context** 
+
+  ~~~java
+  Context 代表着一个web应用 reloadable 默认为false 动态加载不建议在生产上使用
+  ~~~
+
+  默认的web.xml 中配置了 jspServerlet 现在的摸板基本上不怎么用了可以去掉
+
+  现在由于单点登录需要将session打通那么就是将session标识放在redis中那么配置的manage就不存在作用可以删除 
+
+  由于静态资源已经提到ngnix中或者cdn服务中那么配置的css解析器等资源也可以删除减少内存占用
+
+`数据压缩`：
+
+​	Connector：数据压缩配置 compression="100"  数据超过 100byte 就会进行压缩
+
+假如：
+
+​	(1) tomcat:web --->cpu 使用率高了怎么办?
+
+​			top
+
+​		原因：负载高--->线程导致 线程数量为什么多？业务代码：创建了比较多的线程，上下文频繁切换
+
+​		GC频繁：
+
+	> 解决：
+	>
+	> (1) ps -ef | grep tomcat --> pid
+	>
+	> (2) top  -H -p pid 察看某个进程线程使用cpu情况
+	>
+	> (3) 已经知道了是tomcat进程中哪个线程cpu占用率高 
+	>
+	> (4) jstack pid ---> 察看当前线程在干什么 
+	>
+	> (5) 并发编程中线程的各个状态 
+
+### 拒绝连接
+
+* BindException： Address already JVm bind
+
+  端口被占用 netstat -an tomcat换个端口
+
+* ConnectException: refused
+
+  检查一下服务器的机器：ping ip
+
+* SocketException: to many open files 
+
+  文件句柄数不够 关闭无用的文件句柄 ulimit -n 10000 增大文件句柄数
+
+### Tomcat 内存溢出
+
+​	JVM 排查一样
+
+### 类加载器
+
+> bootstrapClassLoader
+>
+> ExtentionClassLoader
+>
+> AppClassLoader
+>
+> CustomClassLoader自定义
+
+ tomcat 打破了双亲委派模型 加载多个web 相同的类
+
+需要进行类隔离【web应用之间/tomcat 类和web】 以及类的共享 spring
+
+~~~java
+CommonClassLoader //通用ClassLoader
+SharedClassLoader //继承CommonClassLoader共享的ClassLoader还是使用原来的双亲委派模型
+WebAppClassLoader //继承SharedClassLoader 打破双亲委派模型
+CatalinaCalssLoader// 继承CommonClassLoader 资源隔离
+~~~
+
+### 分层模式
+
+* 对外
+
+  Connector
+
+  ​	ProtocolHandler 处理协议
+
+  ​		Endpoint
+
+    		AbstractEndpoint->bind()
+
+  ​			APrEndPoint
+
+  ​			NioEndPoint
+
+  ​			Nio2EndPoint
+
+* 对内
+
+  对内所有内部组件为Container
+
+  Engine StandardEngine
+
+  StandardPipline
+
+  Host     StandardHost
+
+  HostConfig 实现了 LifecycleListener  lifecycleEvent() 根据事件实现不同的配置
+
+  Context  StandardContext 
+
+  ContextConfig 实现了 LifecycleListener  lifecycleEvent() 根据事件实现不同的配置
+
+  Wapper  StandardWapper
+
+  ContainerBase
+
+  全部实现Container
+
+  ------
+
+  接收请求 CoyoteAdapt.service()
+
+  TaskThread-run SocketProcessor#doRun()->ConnectionHandler#process()->http11Processor AbstractProcessorLight#process() service() -> CoyoteAdapt.service() ->Connector->StandardService->StandardEngine->ContainerBase->StandardPipeline->StandardEngineValve->StandardHost->ContainerBase->StandardPipeline->ErrorReportValve->ValveBase->StandardHostValve->TomcatEmbeddedContext->ContainerBase->StandardPipeline->NonLoginAuthenticator->AuthenticatorBase->ValveBase->StandardContextValve->StandardWapper->ContainerBase->StandardPipeline->StandardWapperValve->ApplicationFilterFactory->OncePerRequestFilter->CharacterEncodingFilter->FormContentFilter->RequestContextFilter->WsFilter->DispatcherServlet->HttpServlet#service(req,res)->FrameworkServlet#service(res,req)->HttpServlet#service(req,res)->Httpservlet#doGet()->FrameworkServlet#doGet()->FrameworkServlet#processRequest()->DispatcherServlet#doService()->DispatcherServlet#doDispatcher()
+
