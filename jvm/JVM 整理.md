@@ -36,6 +36,14 @@ ClassFile {
 
 1. Loading
 
+   > 类加载器
+   >
+   > BootstrapClassLoader
+   >
+   > ExtensionClassLoader
+   >
+   > AppClassLoader
+
    使用Bootstrap类加载器加载
 
    使用用户自定义的类加载器加载 --双亲委派

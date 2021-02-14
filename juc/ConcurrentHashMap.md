@@ -86,7 +86,7 @@ final V putVal(K key, V value, boolean onlyIfAbsent) {
             }
             //判断是否需要转换
             if (binCount != 0) {
-                //如果该链的长度超过 TREEIFY_THRESHOLD 8
+                //如果该链的长度超过 TREEIFY_THRESHOLD 8 转为红黑树有两个条件 长度大于64 并且链表长度超过>=8
                 if (binCount >= TREEIFY_THRESHOLD)
                     treeifyBin(tab, i);
                 if (oldVal != null)
